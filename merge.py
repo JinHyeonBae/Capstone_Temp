@@ -4,7 +4,7 @@ from __future__ import division
 
 "시선 인식"
 import cv2
-from gaze_tracking import GazeTracking
+from gaze_tracking.gaze_tracking import GazeTracking
 
 "머리 위치 인식"
 import argparse
@@ -12,8 +12,10 @@ import cv2
 import numpy as np
 import os.path as osp
 import os
+import sys
+sys.path.append("C:\\Users\\BJH\\Desktop\\cap")
 
-from HeadposeDetection import headpose
+from Headpose_Detection import headpose
 from gaze_tracking.pupil import Pupil
 
 "from pupil import Pupil"

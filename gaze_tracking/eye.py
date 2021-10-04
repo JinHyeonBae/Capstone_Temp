@@ -1,7 +1,7 @@
 import math
 import numpy as np
 import cv2
-from .pupil import Pupil
+from gaze_tracking.pupil import Pupil
 
 
 class Eye(object):
