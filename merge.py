@@ -20,6 +20,8 @@ from gaze_tracking.pupil import Pupil
 
 "from pupil import Pupil"
 
+def make_calibration_screen():
+    
 def main(args):
     filename = args["input_file"]
 
@@ -46,6 +48,7 @@ def main(args):
     hpd = headpose.HeadposeDetection(args["landmark_type"], args["landmark_predictor"])
 
     count = 0
+
     while(cap.isOpened()):
         # Capture frame-by-frame
         print('\rframe: %d' % count, end='')
