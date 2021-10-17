@@ -31,7 +31,7 @@ class CalibrationValue:
         self.delta = {
             "horizontal": None,
             "vertical": None
-        }
+        }   
 
     def calc_delta(self):
         self.delta['horizontal'] = (abs(self.head_move['right']['ry'] - self.head_move['left']['ry'])) / (abs(self.pulpil_move['right']['horizontal'] - self.pulpil_move['left']['horizontal']))
@@ -87,17 +87,15 @@ class Manager:
 
         return args
 
-    def process_calibration_value(self, step, movement):
-        target_value = self.calibration_value.head_move if movement == "Head"else self.calibration_value.pulpil_move
-
+    def get_current_value(self):
         ret, camera = self.camera.read()
         
         camera = cv2.flip(camera, 1)
         camera, angles = self.headpose.process_image(camera)
 
         self.gaze.refresh(camera)
-        horizontal_pulpil_ratio = self.gaze.horizontal_ratio()
-        vertical_pulpil_ratio = self.gaze.vertical_ratio()
+        horizontal_pulpil_ratio = self.gaze.horizontal_ratio() - 0.5
+        vertical_pulpil_ratio = self.gaze.vertical_ratio() - 0.5
         value = {
             "rx": angles[0],
             "ry": angles[1],
@@ -107,13 +105,19 @@ class Manager:
         }
         
         print(f"""
-캘리브레이션 값 캡쳐
 Headpose rx : {angles[0]}
 Headpose ry : {angles[1]}
 Headpose rz : {angles[2]}
 Gaze Horizontal : {horizontal_pulpil_ratio}
 Gaze Vertical : {vertical_pulpil_ratio}
         """)
+
+        return value
+        
+    def process_calibration_value(self, step, movement):
+        target_value = self.calibration_value.head_move if movement == "Head" else self.calibration_value.pulpil_move
+
+        value = self.get_current_value()
 
         if step == CalibrationStep.UP:
             target_value['up'] = value
@@ -162,11 +166,56 @@ Gaze Vertical : {vertical_pulpil_ratio}
         self.process_calibration_value(CalibrationStep.LEFT, movement)
 
         self.calibration_value.calc_delta()
-         
+
+    def is_in_monitor(self):
+        try:
+            weight = 0.3
+            value = self.get_current_value()
+            delta = self.calibration_value.delta
+
+            horizontal_vector = value['ry'] + ((value['horizontal'] * delta['horizontal']) * weight)
+            vertical_vector = value['rx']
+
+            print(f"""
+horizontal_vector : {horizontal_vector}
+vertical_vector : {vertical_vector}
+            """)
+
+            limit_left = self.calibration_value.head_move['left']['ry']
+            limit_right = self.calibration_value.head_move['right']['ry']
+            limit_up = self.calibration_value.head_move['up']['rx']
+            limit_down = self.calibration_value.head_move['down']['rx']
+
+            print(f"""
+limit_left : {limit_left}
+limit_right : {limit_right}
+limit_up : {limit_up}
+limit_down : {limit_down}
+            """)
+
+            if limit_left <= horizontal_vector <= limit_right and limit_down <= vertical_vector <= limit_up:
+                print("모니터 내부")
+            else:
+                print("모니터 외부")
+
+        except Exception as e:
+            print(e)
+            print("값 검출 에러")
+        
+
+    def start(self):
+        while 1:
+            cv2.waitKey()  
+            self.is_in_monitor()
+
+
+
     def run(self):
         configuration = self.make_configuration()
 
         self.start_camera_capture(configuration)
         self.initialize_headpose(configuration)
         self.calibration()
+        
+        self.start()
 
