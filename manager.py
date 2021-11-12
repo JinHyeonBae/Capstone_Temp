@@ -1,10 +1,16 @@
-import cv2
+import cv2, time
 import numpy as np
-import argparse
+import argparse, random
 from gaze_tracking.gaze_tracking import GazeTracking
 from Headpose_Detection import headpose
+from pynput import keyboard
 
 from enum import Enum
+from random import uniform
+from gaze_tracking.pupil import Pupil
+from socketClient import socketConnect
+
+
 
 class CalibrationStep(Enum):
     UP = 0
@@ -45,12 +51,19 @@ class Manager:
         self.gaze = GazeTracking()
         self.headpose = None
         self.camera = None
+        
+        self.pupil_cheat = False
+        # 
 
     def start_camera_capture(self, args):
         cap = cv2.VideoCapture(0)
         cap.set(3, args['wh'][0])
         cap.set(4, args['wh'][1])
         self.camera = cap
+
+    def start_camera_open(self):
+        ret, frame = self.camera.read()
+    
 
     def initialize_headpose(self, args):
         self.headpose = headpose.HeadposeDetection(args["landmark_type"], args["landmark_predictor"])
@@ -87,6 +100,7 @@ class Manager:
 
         return args
 
+    # 사용자 동공 및 머리 위치 값을 가져옴
     def get_current_value(self):
         ret, camera = self.camera.read()
         
@@ -94,7 +108,9 @@ class Manager:
         camera, angles = self.headpose.process_image(camera)
 
         self.gaze.refresh(camera)
+        # 좌우 방향에 대한 값. -0.5(right) ~ 0.5(left) 사이의 값
         horizontal_pulpil_ratio = self.gaze.horizontal_ratio() - 0.5
+        # 상하 방향에 대한 값. -0.5(top) ~ 0.5(bottom) 사이의 값
         vertical_pulpil_ratio = self.gaze.vertical_ratio() - 0.5
         value = {
             "rx": angles[0],
@@ -118,6 +134,7 @@ Gaze Vertical : {vertical_pulpil_ratio}
         target_value = self.calibration_value.head_move if movement == "Head" else self.calibration_value.pulpil_move
 
         value = self.get_current_value()
+        print("value :", value)
 
         if step == CalibrationStep.UP:
             target_value['up'] = value
@@ -127,6 +144,8 @@ Gaze Vertical : {vertical_pulpil_ratio}
             target_value['down'] = value
         else:
             target_value['right'] = value
+
+        print("target_value :", target_value)
 
     def calibration(self):
         movement = "Head"
@@ -197,25 +216,70 @@ limit_down : {limit_down}
                 print("모니터 내부")
             else:
                 print("모니터 외부")
+                self.pupil_cheat = True
 
         except Exception as e:
             print(e)
             print("값 검출 에러")
         
 
+    def get_pupil_value(self):
+        left_x, left_y = self.gaze.pupil_left_coords()
+        right_x, right_y = self.gaze.pupil_right_coords()
+        return left_x, left_y, right_x, right_y
+
+
     def start(self):
-        while 1:
-            cv2.waitKey()  
+
+        while True:
+            cv2.waitKey()
             self.is_in_monitor()
 
+            left_x, left_y, right_x, right_y = self.get_pupil_value()
+            print("left_x :",left_x)
+            obj = {
+                'left_x': int(left_x), 
+                'left_y': int(left_y), 
+                'right_x' : int(right_x),
+                'right_y' : int(right_y),
+                'cheat' : self.pupil_cheat
+            }
+
+            socketConnect(obj)
+
+    def video(self):
+        ret, frame = self.camera.read()
+        cv2.imshow('frame', frame)
 
 
     def run(self):
-        configuration = self.make_configuration()
 
-        self.start_camera_capture(configuration)
-        self.initialize_headpose(configuration)
-        self.calibration()
-        
-        self.start()
+        # configuration = self.make_configuration()
+
+        # self.start_camera_capture(configuration)
+        # self.initialize_headpose(configuration)
+        # self.calibration()    
+
+        # self.start()
+
+
+        while True:
+            
+            l_x = uniform(10, 24)
+            l_y = uniform(5,50)
+            r_x = uniform(20, 44)
+            r_y = uniform(6,50)
+            ch = random.choice([True, False])
+            obj = {
+                    'left_x': l_x, 
+                    'left_y': l_y, 
+                    'right_x' : r_x,
+                    'right_y' : r_y,
+                    'cheat' : ch
+                }
+
+            socketConnect(obj)
+                
+    
+        #calibration한 후 값을 받아오는 작업을 해야겠움
 
