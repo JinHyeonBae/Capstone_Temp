@@ -3,15 +3,20 @@ import numpy as np
 import argparse, random, imutils
 from gaze_tracking.gaze_tracking import GazeTracking
 from Headpose_Detection import headpose
-from pynput import keyboard
 
 from enum import Enum
 from random import uniform
 from gaze_tracking.pupil import Pupil
-#from socketClient import socketConnect
+from socketClient import socketConnect
 from y3 import Yolo
 
 from threading import Thread
+import ctypes
+
+user32 = ctypes.windll.user32
+screensize = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+print(screensize)
+
 
 class CalibrationStep(Enum):
     UP = 0
@@ -71,7 +76,6 @@ class Manager:
         self.net = cv2.dnn.readNetFromDarknet(self.configPath, self.weightsPath)
         
 
-
     def start_camera_capture(self, args):
         cap = cv2.VideoCapture(0)
         cap.set(3, args['wh'][0])
@@ -125,12 +129,6 @@ class Manager:
 
         return self.args
 
-    def get_layer(self):
-        ln = self.net.getLayerNames()
-        ln = [ln[i[0] - 1] for i in self.net.getUnconnectedOutLayers()]
-
-        return ln
-
 
     # 사용자 동공 및 머리 위치 값을 가져옴
     def get_current_value(self, complete = False):
@@ -142,6 +140,7 @@ class Manager:
 
         # camera..?
         self.gaze.refresh(camera)
+
         # 좌우 방향에 대한 값. -0.5(right) ~ 0.5(left) 사이의 값
         horizontal_pulpil_ratio = self.gaze.horizontal_ratio() - 0.5
         # 상하 방향에 대한 값. -0.5(top) ~ 0.5(bottom) 사이의 값
@@ -256,13 +255,6 @@ class Manager:
         self.stop_camera_capture()
         self.calibration_value.calc_delta()
 
-    
-    def get_layer(self):
-        ln = self.net.getLayerNames()
-        ln = [ln[i[0] - 1] for i in self.net.getUnconnectedOutLayers()]
-
-        return ln
-
 
     def is_in_monitor(self):
         try:
@@ -301,132 +293,91 @@ limit_down : {limit_down}
             print("값 검출 에러")
     
     def stream(self, ln):
-        (W, H) = (None, None)
-        while True:
-            # 프레임 읽기
-            ret, frame = self.camera.read()
 
-            # 읽은 프레임이 없는 경우 종료
-            # if self.args["input"] is not None and frame is None:
-            #     break
-            
-            # 프레임 크기 지정
-            frame = imutils.resize(frame, width=720, height=480)
+        # 프레임 읽기
+        ret, frame = self.camera.read()
 
-            # 프레임 크기
-            if W is None or H is None:
-                (H, W) = frame.shape[:2]
-            
-            # 전체 프레임 수 1 증가
-            self.totalFrame += 1
+        # 읽은 프레임이 없는 경우 종료
+        # if self.args["input"] is not None and frame is None:
+        #     break
+        
+        # 프레임 크기 지정
+        
+        resizerate = screensize[0] / screensize[1]
+        frame = cv2.resize(frame, (0,0), fx=resizerate, fy=1)
+        
+        # 전체 프레임 수 1 증가
+        self.totalFrame += 1
+        # 프레임 별로 object_detection하므로 나누기 수를 늘리면 출력 영상의 속도는 빠름
+        if self.totalFrame % 5 == 1:
+            layerOutputs = self.yolo.object_detection(frame, ln)
 
-            # 5개의 프레임 마다 객체 인식
-            if self.totalFrame % 5 == 1:
-                # blob 이미지 생성
-                # 파라미터
-                # 1) image : 사용할 이미지
-                # 2) scalefactor : 이미지 크기 비율 지정
-                # 3) size : Convolutional Neural Network에서 사용할 이미지 크기를 지정
-                blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (416, 416), swapRB=True, crop=False)
-            
-                # 객체 인식
-                self.net.setInput(blob)
-                layerOutputs = self.net.forward(ln)
-
-                # bounding box, 확률 및 클래스 ID 목록 초기화
-                boxes = []
-                confidences = []
-                classIDs = []
-            
-            # counting 수 초기
-            count = 0
-            
-            # layerOutputs 반복
-            for output in layerOutputs:
-                # 각 클래스 레이블마다 인식된 객체 수 만큼 반복
-                for detection in output:
-                    # 인식된 객체의 클래스 ID 및 확률 추출
-                    scores = detection[5:]
-                    classID = np.argmax(scores)
-                    confidence = scores[classID]
+            boxes, confidences, classIDs = self.yolo.calc_object_rate(layerOutputs, frame.shape)
                     
-                    # 사람이 아닌 경우 제외
-                    if classID != 0: # # yolo-coco 디렉터리에 coco.names 파일을 참고하여 다른 object 도 인식 가능(0 인 경우 사람)
-                        continue
-                    
-                    # 객체 확률이 최소 확률보다 큰 경우
-                    if confidence > self.args["confidence"]:
-                        # bounding box 위치 계산
-                        box = detection[0:4] * np.array([W, H, W, H])
-                        (centerX, centerY, width, height) = box.astype("int") # (중심 좌표 X, 중심 좌표 Y, 너비(가로), 높이(세로))
-                        
-                        # bounding box 왼쪽 위 좌표
-                        x = int(centerX - (width / 2))
-                        y = int(centerY - (height / 2))
-                        
-                        # bounding box, 확률 및 클래스 ID 목록 추가
-                        boxes.append([x, y, int(width), int(height)])
-                        confidences.append(float(confidence))
-                        classIDs.append(classID)
-                        
-            # bounding box가 겹치는 것을 방지(임계값 적용)
+        # bounding box가 겹치는 것을 방지(임계값 적용)
             idxs = cv2.dnn.NMSBoxes(boxes, confidences, self.args["confidence"], self.args["threshold"])
             
-            # 인식된 객체가 있는 경우
-            if len(idxs) > 0:
-                # 모든 인식된 객체 수 만큼 반복
-                for i in idxs.flatten():
-                    # counting 수 증가
-                    count += 1
+            frame = self.yolo.draw_object(idxs, boxes,confidences,classIDs, frame)
 
-                    # bounding box 좌표 추출
-                    (x, y) = (boxes[i][0], boxes[i][1])
-                    (w, h) = (boxes[i][2], boxes[i][3])
-                    
-                    # bounding box 출력
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                    
-                    # 클래스 ID 및 확률
-                    text = "{} : {:.2f}%".format(self.LABELS[classIDs[i]], confidences[i])
-
-                    # label text 잘림 방지
-                    y = y - 15 if y - 15 > 15 else y + 15
-                    
-                    # text 출력
-                    cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            
-            # counting 결과 출력
-            counting_text = "People Counting : {}".format(count)
-            cv2.putText(frame, counting_text, (10, frame.shape[0] - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 0, 255), 3)
-
-            # 프레임 출력
-            cv2.imshow("Real-Time Object Detection", frame)
-            key = cv2.waitKey(1) & 0xFF
-            
-            # 'q' 키를 입력하면 종료
-            if key == ord("q"):
-                break
+        # 프레임 출력
+        cv2.imshow("Real-Time Object Detection", frame)
 
 
     def get_pupil_value(self):
         left_x, left_y = self.gaze.pupil_left_coords()
+        print("left _x :", left_x)
         right_x, right_y = self.gaze.pupil_right_coords()
         return left_x, left_y, right_x, right_y
 
 
     def start(self):
         # 카메라 start
-        self.start_camera_capture(self.args)
+        #self.start_camera_capture(self.args)
 
-        ln = self.yolo.get_layer()
         
+        # left_x, left_y, right_x, right_y = self.get_pupil_value()
+        # print("left_x :",left_x)
+        # obj = {
+        #     'left_x': int(left_x), 
+        #     'left_y': int(left_y), 
+        #     'right_x' : int(right_x),
+        #     'right_y' : int(right_y),
+        #     'cheat' : self.pupil_cheat
+        # }
+    
+     
+        
+        # while True:
+            
+        #     l_x = uniform(10, 24)
+        #     l_y = uniform(5,50)
+        #     r_x = uniform(20, 44)
+        #     r_y = uniform(6,50)
+        #     ch = random.choice([True, False])
+        #     obj = {
+        #             'left_x': l_x, 
+        #             'left_y': l_y, 
+        #             'right_x' : r_x,
+        #             'right_y' : r_y,
+        #             'cheat' : ch
+        #         }
+
+        #     socketConnect(obj, 'pupil')
+
+        
+        self.start_camera_capture(self.args)
+        ln = self.yolo.get_layer()
+
         while True:
-            try:  
-                cv2.waitKey()
+            try: 
                 self.is_in_monitor()
                 self.stream(ln)
                 
-            
+                key = cv2.waitKey(1) & 0xFF
+
+                if key == ord('q'):
+                    break
+
             except KeyboardInterrupt : 
                 print("Interrupt!")
                 break
@@ -441,18 +392,3 @@ limit_down : {limit_down}
         self.calibration()    
 
         self.start()
-        
-     
-
-
-#  left_x, left_y, right_x, right_y = self.get_pupil_value()
-#             print("left_x :",left_x)
-#             obj = {
-#                 'left_x': int(left_x), 
-#                 'left_y': int(left_y), 
-#                 'right_x' : int(right_x),
-#                 'right_y' : int(right_y),
-#                 'cheat' : self.pupil_cheat
-#             }
-
-#             socketConnect(obj)
