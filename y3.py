@@ -7,7 +7,7 @@ import time # 시간 처리 모듈
 import cv2 # opencv 모듈
 import os
 import ctypes
-
+from gaze_tracking.gaze_tracking import GazeTracking
 from queue import Queue
 import schedule
 from socketClient import socketClient
@@ -27,7 +27,7 @@ class Yolo:
         # YOLO 모델이 학습된 coco 클래스 레이블
         self.labelsPath = os.path.sep.join(["model", "coco.names"])
         self.LABELS = open(self.labelsPath).read().strip().split("\n")
-
+        self.gaze = GazeTracking()
         # YOLO 가중치 및 모델 구성에 대한 경로
         self.weightsPath = os.path.sep.join(["model", "yolov3.weights"]) # 가중치
         self.configPath = os.path.sep.join(["model", "yolov3.cfg"]) # 모델 구성
@@ -162,15 +162,19 @@ class Yolo:
     
     camera = cv2.VideoCapture(0)
     def stream(self, ln):
-        schedule.every(3).seconds.do(self.send)
+        schedule.every(0.5).seconds.do(self.send)
         while True:
             # 프레임 읽기
             schedule.run_pending()
             ret, frame = self.vs.read()
             
             # 프레임 크기 지정
-            resizerate = screensize[0] / screensize[1]
-            frame = cv2.resize(frame, (0,0), fx=resizerate, fy=1)
+            frame = cv2.resize(frame, (480, 480))
+
+            self.gaze.refresh(frame)
+
+            new_frame = self.gaze.annotated_frame()
+            text = ""
            
             # 전체 프레임 수 1 증가
             self.totalFrame += 1
